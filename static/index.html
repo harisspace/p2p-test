@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>peer-to-peer</title>
+  <script>
+    window.addEventListener('load', (e) => {
+
+  const call = document.getElementById('create-call')
+  const join = document.getElementById('join-call')
+  const hangup = document.getElementById('hangup')
+  const activeUser = document.getElementById('active-user')
+  const localVideo = document.getElementById('local-video')
+  const remoteVideo = document.getElementById('remote-video')
+  
+  // WEBSOCKET
+  
+  const iceServers = {
+    'iceServer': [
+        {'url': 'stun:stun.l.google.com:19302'}
+    ]
+}
+  let ws = new WebSocket("{{.}}")
+  let pc = new RTCPeerConnection(iceServers)
+
+   ws.onopen = (e) => {
+       console.log("ws open")
+   }
+  
+   ws.onclose = (e) => {
+       console.log("ws close")
+   }
+  
+   ws.onmessage = (e) => {
+    let msg = JSON.parse(e.data)
+    switch (msg.topic) {
+        case 'user-info':
+          activeUser.innerText = msg.data
+          break
+        case 'offer':
+          let sd = msg.data.sessionDescription
+          let desc = new RTCSessionDescription(sd)
+          pc.setRemoteDescription(desc)
+          .then(() => pc.createAnswer())
+          .then((answer) => pc.setLocalDescription(answer))
+          .then(() => {
+            ws.send(JSON.stringify({
+                topic: 'answer',
+                data: {
+                    sessionDescription: pc.localDescription
+                }
+            }))
+          })
+          .catch(err =>console.log(err))
+          break;
+        case 'candidate':
+          const candidate = new RTCIceCandidate(msg.data.candidate)
+          pc.addIceCandidate(candidate)
+              .catch(err => console.log(err))
+          break;
+        case 'answer':
+          pc.setRemoteDescription(msg.data.sessionDescription)
+          break;
+        default:
+            break;
+    }
+  }
+  
+  // WEBRTC
+  const offerOptions = {
+    offerToReceiveVideo: 1
+  }
+
+  // On this codelab, you will be streaming only video (video: true).
+  const mediaStreamConstraints = {
+    video: true
+  };
+  
+  // Handles success by adding the MediaStream to the video element.
+  function gotLocalMediaStream(mediaStream) {
+    localStream = mediaStream;
+    localVideo.srcObject = mediaStream;
+    console.log('Received local stream.');
+    call.disabled = false;  // Enable call button.
+  }
+  
+  // Handles error by logging a message to the console with the error message.
+  function handleLocalMediaStreamError(error) {
+    console.log('navigator.getUserMedia error: ', error);
+  }
+  
+  // Initializes media stream.
+  call.addEventListener('click', () => {
+    // user media
+    navigator.mediaDevices.getUserMedia(mediaStreamConstraints)
+    .then(localStream => {
+      localVideo.srcObject = localStream
+      localStream
+        .getTracks()
+        .forEach(track => pc.addTrack(track, localStream))
+    })
+    .catch(handleLocalMediaStreamError)
+
+    pc.onsignalingstatechange = signalingStateCallback
+    pc.oniceconnectionstatechange = iceStateCallback
+    pc.onconnectionstatechange = connStateCallback
+    pc.onicecandidate = onIceCandidate
+    pc.ontrack = onTrack
+
+    // will receive answer
+    join.innerText = ""
+    call.innerText = ""
+  })
+  join.addEventListener('click', async () => {  
+    navigator.mediaDevices.getUserMedia(mediaStreamConstraints)
+    .then(localStream => {
+      localVideo.srcObject = localStream
+      localStream
+        .getTracks()
+        .forEach(track => pc.addTrack(track, localStream))
+    })
+    .catch(handleLocalMediaStreamError)
+
+    pc.onsignalingstatechange = signalingStateCallback
+    pc.oniceconnectionstatechange = iceStateCallback
+    pc.onconnectionstatechange = connStateCallback
+    pc.onicecandidate = onIceCandidate
+    pc.ontrack = onTrack
+
+    const sessionDescription = await pc.createOffer(offerOptions)
+    pc.setLocalDescription(sessionDescription)
+    ws.send(JSON.stringify({
+        topic: 'offer',
+        data: {
+            sessionDescription: sessionDescription
+        }
+    }))
+  })
+  
+  // === WEBRTC SERVER ===
+
+function onTrack(e) {
+  console.log("got remote stream")
+  remoteVideo.srcObject = e.streams[0]
+  remoteStream = e.streams[0]
+}
+
+function signalingStateCallback() {
+  let state;
+  if (pc) {
+      state = pc.signalingState
+      console.log("signaling state: ", state)
+  }
+}
+
+function iceStateCallback() {
+  let iceState
+  if (pc) {
+      iceState = pc.iceConnectionState
+      console.log("ICE connection state: ", iceState)
+  }
+}
+
+function connStateCallback() {
+  let connState
+  if (pc) {
+    if (pc.connectionState) console.log("Connection state: ", pc.connectionState)
+  }
+}
+
+function onIceCandidate(e) {
+  if (e.candidate) {
+      // console.log('sending ice candidate', e.candidate)
+      ws.send(JSON.stringify({
+          topic: 'candidate',
+          data: {
+              label: e.candidate.sdpMLineIndex,
+              id: e.candidate.sdpMid,
+              candidate: e.candidate
+          }
+      }))
+  }
+}
+
+  })
+
+  </script>
+</head>
+<body>
+  <h1>Realtime communication with WebRTC</h1>
+
+  <video id="local-video" autoplay playsinline></video>
+  <video id="remote-video" autoplay playsinline></video>
+
+<div>
+  <button id="create-call">Create Call</button>
+  <button id="join-call">Join Call</button>
+  <button id="hangup">Hang Up</button>
+</div>
+<br>
+<h1>Active user</h1>
+<br>
+<h2 id="active-user""></h2>
+
+</body>
+</html>
